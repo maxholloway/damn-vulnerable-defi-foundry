@@ -14,7 +14,7 @@ TheRewarder:
 	forge test --match-test testExploit --match-contract TheRewarder
 
 Selfie:
-	forge test --match-test testExploit --match-contract Selfie
+	forge test -vvvv --match-test testExploit --match-contract Selfie
 
 Compromised:
 	forge test --match-test testExploit --match-contract Compromised
